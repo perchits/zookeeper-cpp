@@ -136,23 +136,27 @@ function(build_module)
     set(${MODULE_NAME}_LIBRARY_HEADERS ${library_hpps} PARENT_SCOPE)
   endif()
 
-  if(library_test_cpps)
-    list(LENGTH library_test_cpps library_test_cpps_length)
-    message(STATUS "  + test library (${library_test_cpps_length})")
-    list(APPEND MODULE_TARGETS ${MODULE_NAME}_tests)
-    add_library(${MODULE_NAME}_tests SHARED ${library_test_cpps})
-    set_target_properties(${MODULE_NAME}_tests
-                          PROPERTIES
-                              SOVERSION ${PROJECT_SO_VERSION}
-                              VERSION   ${PROJECT_SO_VERSION}
-                         )
-    target_link_libraries(${MODULE_NAME}_tests zkpp-tests)
-    if(library_cpps)
-      target_link_libraries(${MODULE_NAME}_tests ${MODULE_NAME})
+  if (NOT ZKPP_SKIP_TESTS)
+  
+    if(library_test_cpps)
+      list(LENGTH library_test_cpps library_test_cpps_length)
+      message(STATUS "  + test library (${library_test_cpps_length})")
+      list(APPEND MODULE_TARGETS ${MODULE_NAME}_tests)
+      add_library(${MODULE_NAME}_tests SHARED ${library_test_cpps})
+      set_target_properties(${MODULE_NAME}_tests
+                            PROPERTIES
+                                SOVERSION ${PROJECT_SO_VERSION}
+                                VERSION   ${PROJECT_SO_VERSION}
+                           )
+      target_link_libraries(${MODULE_NAME}_tests zkpp-tests)
+      if(library_cpps)
+        target_link_libraries(${MODULE_NAME}_tests ${MODULE_NAME})
+      endif()
+      target_link_libraries(zkpp-tests_prog ${MODULE_NAME}_tests)
     endif()
-    target_link_libraries(zkpp-tests_prog ${MODULE_NAME}_tests)
-  endif()
 
+  endif()
+    
   if(MODULE_PROTOTYPE)
     foreach(target ${MODULE_TARGETS})
       set_target_properties(${target}

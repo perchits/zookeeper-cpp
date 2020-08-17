@@ -27,7 +27,9 @@ include(BuildFunctions)
 include(CheckIncludeFileCXX)
 include(ConfigurationSetting)
 include(ListSplit)
-include(ZooKeeper)
+if (NOT ZKPP_SKIP_TESTS)
+  include(ZooKeeper)
+endif()
 
 ################################################################################
 # Build Configuration                                                          #
@@ -95,53 +97,57 @@ include_directories("${PROJECT_SOURCE_DIR}/src")
 ################################################################################
 # GTest                                                                        #
 ################################################################################
+if (NOT ZKPP_SKIP_TESTS)
 
-find_package(GTest)
+  find_package(GTest)
 
-if(GTest_FOUND)
-  # Make it look like find_library
-  set(gtest_LIBRARIES GTest::GTest)
-elseif(EXISTS "/usr/src/googletest/googletest/src" OR EXISTS "/usr/src/gtest/src/")
-  # GTest's packaging on Ubuntu (googletest or libgtest-dev, depending on which version) contains all the source files
-  # instead of a library and headers. CMake has a package discovery for GTest, but it does not pick up on this for you,
-  # so we'll build it manually here.
-  message(STATUS "GTest is not installed, but the sources were found...adding them to the build")
-  if(EXISTS "/usr/src/googletest/googletest/src")
-    # Prefer the "googletest" version, as sometimes the "gtest" one is an empty directory (this seems to be the result
-    # of a packaging issue)
-    set(GTEST_SRC_ROOT "/usr/src/googletest/googletest/src")
+  if(GTest_FOUND)
+    # Make it look like find_library
+    set(gtest_LIBRARIES GTest::GTest)
+  elseif(EXISTS "/usr/src/googletest/googletest/src" OR EXISTS "/usr/src/gtest/src/")
+    # GTest's packaging on Ubuntu (googletest or libgtest-dev, depending on which version) contains all the source files
+    # instead of a library and headers. CMake has a package discovery for GTest, but it does not pick up on this for you,
+    # so we'll build it manually here.
+    message(STATUS "GTest is not installed, but the sources were found...adding them to the build")
+    if(EXISTS "/usr/src/googletest/googletest/src")
+      # Prefer the "googletest" version, as sometimes the "gtest" one is an empty directory (this seems to be the result
+      # of a packaging issue)
+      set(GTEST_SRC_ROOT "/usr/src/googletest/googletest/src")
+    else()
+      set(GTEST_SRC_ROOT "/usr/src/gtest/src")
+    endif()
+
+    if(EXISTS "${GTEST_SRC_ROOT}/gtest-all.cc")
+      set(gtest_lib_cpps "${GTEST_SRC_ROOT}/gtest-all.cc")
+      message(STATUS "Building with ${GTEST_SRC_ROOT}/gtest-all.cc")
+    else()
+      file(GLOB gtest_lib_cpps "${GTEST_SRC_ROOT}/gtest-*.cc")
+      message(STATUS "Building with gtest_lib_cpps=${gtest_lib_cpps}")
+    endif()
+    add_library(gtest SHARED ${gtest_lib_cpps})
+
+    # GTest uses relative imports incorrectly, so make sure to add it to the include path.
+    target_include_directories(gtest PRIVATE "${GTEST_SRC_ROOT}/..")
+    # Also disable -Werror
+    target_compile_options(gtest PRIVATE "-Wno-error")
+
+    set(gtest_LIBRARIES gtest)
   else()
-    set(GTEST_SRC_ROOT "/usr/src/gtest/src")
+    message(SEND_ERROR "GTest was not found")
   endif()
 
-  if(EXISTS "${GTEST_SRC_ROOT}/gtest-all.cc")
-    set(gtest_lib_cpps "${GTEST_SRC_ROOT}/gtest-all.cc")
-    message(STATUS "Building with ${GTEST_SRC_ROOT}/gtest-all.cc")
-  else()
-    file(GLOB gtest_lib_cpps "${GTEST_SRC_ROOT}/gtest-*.cc")
-    message(STATUS "Building with gtest_lib_cpps=${gtest_lib_cpps}")
-  endif()
-  add_library(gtest SHARED ${gtest_lib_cpps})
-
-  # GTest uses relative imports incorrectly, so make sure to add it to the include path.
-  target_include_directories(gtest PRIVATE "${GTEST_SRC_ROOT}/..")
-  # Also disable -Werror
-  target_compile_options(gtest PRIVATE "-Wno-error")
-
-  set(gtest_LIBRARIES gtest)
-else()
-  message(SEND_ERROR "GTest was not found")
 endif()
 
 ################################################################################
 # Building                                                                     #
 ################################################################################
-
-build_module(NAME zkpp-tests
-             PATH src/zk/tests
-             LINK_LIBRARIES
-               ${gtest_LIBRARIES}
-            )
+if (NOT ZKPP_SKIP_TESTS)
+  build_module(NAME zkpp-tests
+               PATH src/zk/tests
+               LINK_LIBRARIES
+                 ${gtest_LIBRARIES}
+              )
+endif()
 
 build_module(NAME zkpp
              PATH src/zk
@@ -150,60 +156,64 @@ build_module(NAME zkpp
                ${zookeeper_LIBRARIES}
             )
 
-build_module(NAME zkpp-server
-             PATH src/zk/server
-             LINK_LIBRARIES
-               zkpp
-            )
+if (NOT ZKPP_SKIP_TESTS)
 
-target_link_libraries(zkpp_tests zkpp-server zkpp-server_tests)
+  build_module(NAME zkpp-server
+               PATH src/zk/server
+               LINK_LIBRARIES
+                 zkpp
+              )
+
+  target_link_libraries(zkpp_tests zkpp-server zkpp-server_tests)
 
 ################################################################################
 # ZooKeeper Server Testing                                                     #
 ################################################################################
 
-foreach(server_version IN LISTS ZKPP_SERVER_VERSIONS)
-  find_zookeeper_server(VERSION "${server_version}"
-                        OUTPUT_CLASSPATH server_classpath
-                       )
-  set(generated_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/src/zk/server/classpath_registration_${server_version}.cpp")
-  configure_file(src/zk/server/classpath_registration_template.cpp.in "${generated_cpp}" @ONLY)
-  target_sources(zkpp-server_tests PRIVATE "${generated_cpp}")
-endforeach()
+  foreach(server_version IN LISTS ZKPP_SERVER_VERSIONS)
+    find_zookeeper_server(VERSION "${server_version}"
+                          OUTPUT_CLASSPATH server_classpath
+                         )
+    set(generated_cpp "${CMAKE_CURRENT_BINARY_DIR}/generated/src/zk/server/classpath_registration_${server_version}.cpp")
+    configure_file(src/zk/server/classpath_registration_template.cpp.in "${generated_cpp}" @ONLY)
+    target_sources(zkpp-server_tests PRIVATE "${generated_cpp}")
+  endforeach()
 
 ################################################################################
 # Targets                                                                      #
 ################################################################################
 
-add_custom_target(test
-                  COMMAND $<TARGET_FILE:zkpp-tests_prog>
-                          "--gtest_output=xml:test-results.xml"
-                          "--gtest_death_test_style=threadsafe"
-                  DEPENDS zkpp-tests_prog
-                  BYPRODUCTS test-results.xml
-                  USES_TERMINAL
-                 )
+  add_custom_target(test
+                    COMMAND $<TARGET_FILE:zkpp-tests_prog>
+                            "--gtest_output=xml:test-results.xml"
+                            "--gtest_death_test_style=threadsafe"
+                    DEPENDS zkpp-tests_prog
+                    BYPRODUCTS test-results.xml
+                    USES_TERMINAL
+                   )
 
 # Similar to test, but run it inside of GDB with GTest options one would want when running in GDB.
-add_custom_target(gdbtest
-                  COMMAND "gdb"
-                          "-args"
-                          $<TARGET_FILE:zkpp-tests_prog>
-                          "--gtest_output=xml:test-results-gdb.xml"
-                          "--gtest_death_test_style=threadsafe"
-                          "--gtest_break_on_failure=1"
-                          "--gtest_catch_exceptions=0"
-                  DEPENDS zkpp-tests_prog
-                  BYPRODUCTS test-results-gdb.xml
-                  USES_TERMINAL
-                 )
+  add_custom_target(gdbtest
+                    COMMAND "gdb"
+                            "-args"
+                            $<TARGET_FILE:zkpp-tests_prog>
+                            "--gtest_output=xml:test-results-gdb.xml"
+                            "--gtest_death_test_style=threadsafe"
+                            "--gtest_break_on_failure=1"
+                            "--gtest_catch_exceptions=0"
+                    DEPENDS zkpp-tests_prog
+                    BYPRODUCTS test-results-gdb.xml
+                    USES_TERMINAL
+                   )
 
-if(ZKPP_BUILD_OPTION_CODE_COVERAGE)
-  include(CodeCoverage)
+  if(ZKPP_BUILD_OPTION_CODE_COVERAGE)
+    include(CodeCoverage)
 
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
-  setup_target_for_coverage(test-coverage zkpp-tests_prog coverage "--gtest_death_test_style=threadsafe")
-endif()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
+    setup_target_for_coverage(test-coverage zkpp-tests_prog coverage "--gtest_death_test_style=threadsafe")
+  endif()
+  
+endif() #(NOT ZKPP_SKIP_TESTS)
 
 ################################################################################
 # Packaging                                                                    #
